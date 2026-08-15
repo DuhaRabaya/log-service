@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Type-check and build
+        run: npm run build
+
+      - name: Start full stack
+        run: docker compose up -d --build
+
+      - name: Wait for service to be healthy
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8080/health; then
+              echo "Service is healthy"
+              exit 0
+            fi
+            echo "Waiting for service..."
+            sleep 2
+          done
+          echo "Service failed to become healthy in time"
+          docker compose logs
+          exit 1
+
+      - name: Smoke test — GET /health
+        run: curl -sf http://localhost:8080/health
+
+      - name: Smoke test — POST /logs
+        run: |
+          RESPONSE=$(curl -sf -X POST http://localhost:8080/logs \
+            -H "Content-Type: application/json" \
+            -d '{"logs":[{"timestamp":"2026-08-12T10:00:00Z","level":"info","service":"ci-test","message":"ci smoke test"}]}')
+          echo "$RESPONSE"
+          echo "$RESPONSE" | grep -q '"accepted":1'
+
+      - name: Smoke test — GET /logs
+        run: |
+          RESPONSE=$(curl -sf "http://localhost:8080/logs?service=ci-test")
+          echo "$RESPONSE"
+          echo "$RESPONSE" | grep -q 'ci-test'
+
+      - name: Smoke test — GET /logs/aggregate
+        run: |
+          RESPONSE=$(curl -sf "http://localhost:8080/logs/aggregate?since=2026-08-01T00:00:00Z&until=2026-08-31T00:00:00Z&bucket=1d")
+          echo "$RESPONSE"
+          echo "$RESPONSE" | grep -q 'buckets'
+
+      - name: Show logs on failure
+        if: failure()
+        run: docker compose logs
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v

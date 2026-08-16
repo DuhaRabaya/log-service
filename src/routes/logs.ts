@@ -185,11 +185,9 @@ logsRouter.get("/logs", async (req: Request, res: Response) => {
     conditions.push(`message ILIKE $${params.length}`);
   }
   for (const { key, value } of attrFilters) {
-    params.push(key);
-    const keyParam = params.length;
-    params.push(value);
-    conditions.push(`attributes ->> $${keyParam} = $${params.length}`);
-  }
+  params.push(JSON.stringify({ [key]: value }));
+  conditions.push(`attributes @> $${params.length}::jsonb`);
+}
   if (cursor) {
     params.push(cursor.timestamp);
     const tsParam = params.length;
@@ -306,16 +304,20 @@ logsRouter.get("/logs/aggregate", async (req: Request, res: Response) => {
     conditions.push(`message ILIKE $${params.length}`);
   }
   for (const { key, value } of attrFilters) {
-    params.push(key);
-    const keyParam = params.length;
-    params.push(value);
-    conditions.push(`attributes ->> $${keyParam} = $${params.length}`);
-  }
+  params.push(JSON.stringify({ [key]: value }));
+  conditions.push(`attributes @> $${params.length}::jsonb`);
+}
 
-  params.push(bucketSeconds);
-  const bucketParam = params.length;
+  const DATE_TRUNC_UNIT: Record<string, string> = {
+  "1m": "minute",
+  "1h": "hour",
+  "1d": "day",
+};
 
-  const bucketExpr = `to_timestamp(floor(extract(epoch from timestamp) / $${bucketParam}) * $${bucketParam})`;
+const truncUnit = DATE_TRUNC_UNIT[bucket as string];
+const bucketExpr = truncUnit
+  ? `date_trunc('${truncUnit}', timestamp AT TIME ZONE 'UTC')`
+  : `to_timestamp(floor(extract(epoch from timestamp) / 300) * 300)`;
 
   const selectGroup = groupColumn ? groupColumn : "NULL";
   const groupByClause = groupColumn ? `${bucketExpr}, ${groupColumn}` : bucketExpr;
